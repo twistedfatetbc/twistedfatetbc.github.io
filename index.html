@@ -1,0 +1,360 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Twistedfate Three Bright Cards!</title>
+    <meta name="description" content="Twistedfate TBC is a fun 2D side-scroller game for kids where a hero throws bright, magical cards to explore a mystic world. Jump and use special abilities, including a double jump!">
+    <meta name="keywords" content="Twistedfate, TBC, 2D game, kids game, card thrower, platformer, side scroller, bright cards, magic cards, mosquito, enemy, double jump">
+    <style>
+        body {
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+            margin: 0;
+            background-color: #f0f0f0;
+            font-family: sans-serif;
+            flex-direction: column;
+        }
+        canvas {
+            border: 2px solid #333;
+            display: block;
+            background-color: #87ceeb; 
+        }
+        .description-box {
+            width: 800px;
+            padding: 10px;
+            margin-bottom: 15px;
+            text-align: center;
+            background-color: #fff;
+            border: 1px solid #ccc;
+            border-radius: 5px;
+        }
+        .controls {
+            margin-bottom: 15px;
+            font-size: 1.2em;
+            color: #333;
+            text-align: center;
+        }
+    </style>
+</head>
+<body>
+
+    <div class="description-box">
+        <h2>Twistedfate TBC</h2>
+        <p>Twistedfate TBC is a fun 2D game about a hero who loves playing with cards to discover a mystic world! Help Twistedfate run, jump, and throw bright, magical cards to clear his path and find new adventures.</p>
+    </div>
+
+    <div class="controls">
+        Use **Left/Right Arrows** to move. Press **SPACE** to jump (**Double Jump Enabled!**).<br>
+        Press **F** to throw a regular card.<br>
+        <span style="color: #cc9900; font-weight: bold;">Press **T** for Special Card after 3 regular cards! (2s window)</span>
+    </div>
+    <canvas id="gameCanvas" width="800" height="400"></canvas>
+
+    <script>
+        // --- Game Constants ---
+        const CANVAS_WIDTH = 800;
+        const CANVAS_HEIGHT = 400;
+        const PLAYER_WIDTH = 64;
+        const PLAYER_HEIGHT = 80;
+        const PLAYER_SPEED = 4;
+        const GROUND_Y = CANVAS_HEIGHT - 20;
+        const GRAVITY = 0.5;
+        const JUMP_VELOCITY = -10;
+        const MAX_JUMP_COUNT = 4; // NEW: Set to 2 for double jump, 3 for triple jump
+        
+        // Card Constants
+        const CARD_WIDTH = 15;
+        const CARD_HEIGHT = 25;
+        const CARD_SPEED = 7;
+        
+        // Special Card Constants
+        const DARK_GOLD_COLOR = '#cc9900'; 
+        const SPARKLE_COLOR = 'gold';      
+        const SPECIAL_CARD_TIMEOUT = 2000; 
+        const REGULAR_CARD_LIMIT = 3;      
+        
+        // Enemy Constants
+        const MOSQUITO_SIZE = 15;
+        const MOSQUITO_FLOAT_SPEED = 0.05; 
+        const MOSQUITO_SPAWN_RATE = 150; 
+
+        const SCROLL_AMOUNT = 50;
+        const WOW_DURATION = 500; 
+
+        // --- Setup Canvas and Context ---
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+
+        // --- Image Loading ---
+        const musketeerImage = new Image();
+        musketeerImage.src = 'musketeer.png'; 
+        let imageLoaded = false;
+        
+        musketeerImage.onload = function() {
+            imageLoaded = true;
+            gameLoop();
+        };
+
+        // --- Particle, Card, and Ground Classes (No significant change) ---
+        class Particle {
+            constructor(x, y) {
+                this.x = x; this.y = y; this.size = Math.random() * 2 + 1;
+                this.speedX = Math.random() * 2 - 1; this.speedY = Math.random() * 2 - 1;
+                this.color = SPARKLE_COLOR; this.life = 30;
+            }
+            update() { this.x += this.speedX; this.y += this.speedY; this.life--; }
+            draw() {
+                ctx.fillStyle = this.color;
+                ctx.beginPath();
+                ctx.arc(this.x, this.y, this.size, 0, Math.PI * 2);
+                ctx.fill();
+            }
+        }
+
+        class Card {
+            constructor(x, y, color, isSpecial = false) {
+                this.x = x; this.y = y; this.isSpecial = isSpecial;
+                this.width = isSpecial ? 30 : CARD_WIDTH; this.height = isSpecial ? 45 : CARD_HEIGHT;
+                this.color = isSpecial ? DARK_GOLD_COLOR : color; 
+                this.speed = isSpecial ? 10 : CARD_SPEED;
+                this.active = true; this.particles = [];
+            }
+            update() {
+                this.x += this.speed;
+                if (this.x > CANVAS_WIDTH) { this.active = false; }
+                if (this.isSpecial) {
+                    if (Math.random() < 0.5) { this.particles.push(new Particle(this.x + this.width / 2, this.y + this.height / 2)); }
+                    this.particles = this.particles.filter(p => p.life > 0);
+                    this.particles.forEach(p => p.update());
+                }
+            }
+            draw() {
+                ctx.fillStyle = this.color; ctx.fillRect(this.x, this.y, this.width, this.height);
+                if (!this.isSpecial) {
+                    ctx.fillStyle = 'rgba(255, 255, 255, 0.8)'; ctx.fillRect(this.x + 2, this.y + 2, 3, 3);
+                } else {
+                    ctx.strokeStyle = SPARKLE_COLOR; ctx.lineWidth = 2; ctx.strokeRect(this.x, this.y, this.width, this.height);
+                }
+                if (this.isSpecial) { this.particles.forEach(p => p.draw()); }
+            }
+        }
+
+        class Mosquito {
+            constructor() {
+                this.x = CANVAS_WIDTH; this.y = Math.random() * (GROUND_Y - 100) + 20; 
+                this.size = MOSQUITO_SIZE; this.floatOffset = Math.random() * Math.PI * 2; 
+                this.active = true;
+            }
+            update(playerDX) {
+                this.x -= playerDX; 
+                this.floatOffset += MOSQUITO_FLOAT_SPEED;
+                this.y += Math.sin(this.floatOffset) * 0.5;
+                if (this.x < -this.size) { this.active = false; }
+            }
+            draw() {
+                ctx.fillStyle = '#666'; 
+                ctx.beginPath();
+                ctx.arc(this.x + this.size / 2, this.y + this.size / 2, this.size / 2, 0, Math.PI * 2);
+                ctx.fill();
+                ctx.strokeStyle = 'rgba(255, 255, 255, 0.7)';
+                ctx.lineWidth = 1;
+                ctx.beginPath();
+                ctx.moveTo(this.x, this.y + this.size / 2); ctx.lineTo(this.x - 5, this.y + this.size / 2 - 5);
+                ctx.moveTo(this.x + this.size, this.y + this.size / 2); ctx.lineTo(this.x + this.size + 5, this.y + this.size / 2 - 5);
+                ctx.stroke();
+            }
+        }
+
+        const ground = {
+            scrollOffset: 0, color1: '#4CAF50', color2: '#607D8B',
+            update: function(playerDX) { this.scrollOffset -= playerDX; },
+            draw: function() {
+                ctx.fillStyle = this.color1;
+                ctx.fillRect(0, GROUND_Y, CANVAS_WIDTH, CANVAS_HEIGHT - GROUND_Y);
+                let startX = this.scrollOffset % SCROLL_AMOUNT;
+                for (let x = startX - SCROLL_AMOUNT; x < CANVAS_WIDTH; x += SCROLL_AMOUNT) {
+                    ctx.fillStyle = this.color2;
+                    ctx.fillRect(x, GROUND_Y, 5, CANVAS_HEIGHT - GROUND_Y); 
+                    ctx.beginPath();
+                    ctx.arc(x + SCROLL_AMOUNT / 2, GROUND_Y, 3, 0, Math.PI * 2);
+                    ctx.fill();
+                }
+            }
+        };
+
+        // --- Player Object (Updated Jump Logic) ---
+        const player = {
+            x: 50, y: GROUND_Y - PLAYER_HEIGHT, width: PLAYER_WIDTH, height: PLAYER_HEIGHT,
+            dx: 0, vy: 0, 
+            isJumping: false,
+            currentJumpCount: 0, // NEW: Counter for jumps taken
+            
+            update: function() {
+                this.x += this.dx; this.vy += GRAVITY; this.y += this.vy;
+                if (this.x < 0) this.x = 0; if (this.x + this.width > CANVAS_WIDTH) this.x = CANVAS_WIDTH - this.width;
+                
+                // Ground Collision and Jump Reset
+                if (this.y + this.height > GROUND_Y) { 
+                    this.y = GROUND_Y - this.height; 
+                    this.vy = 0; 
+                    this.isJumping = false; 
+                    this.currentJumpCount = 0; // RESET jump count when landing
+                }
+            },
+            
+            jump: function() {
+                // Allow jump if current count is less than max
+                if (this.currentJumpCount < MAX_JUMP_COUNT) {
+                    this.vy = JUMP_VELOCITY;
+                    this.currentJumpCount++; // Increment jump count
+                    this.isJumping = true;
+                }
+            },
+            
+            draw: function() {
+                if (imageLoaded) { ctx.drawImage(musketeerImage, this.x, this.y, this.width, this.height); } 
+                else { ctx.fillStyle = 'red'; ctx.fillRect(this.x, this.y, this.width, this.height); }
+            }
+        };
+
+        // --- Game State and Functions (Unchanged logic for cards/enemies) ---
+        let cards = [];
+        let enemies = []; 
+        let totalCardsThrown = 0;
+        let lastMainCardTime = 0;
+        let specialReady = false;
+        let showWowMessage = false; 
+        let score = 0; 
+        let frames = 0; 
+        const cardColors = ['#ff4081', '#40c4ff', '#ffee58'];
+        const keys = {};
+
+        function checkCollision(objA, objB) {
+            return objA.x < objB.x + objB.width && objA.x + objA.width > objB.x &&
+                   objA.y < objB.y + objB.height && objA.y + objA.height > objB.y;
+        }
+
+        function throwCard() {
+            const colorIndex = totalCardsThrown % cardColors.length; 
+            const cardColor = cardColors[colorIndex];
+            const newCard = new Card(player.x + player.width - 10, player.y + player.height / 2, cardColor);
+            cards.push(newCard);
+            totalCardsThrown++;
+            if (totalCardsThrown % REGULAR_CARD_LIMIT === 0) {
+                lastMainCardTime = Date.now();
+                specialReady = true;
+            }
+        }
+        
+        function throwSpecialCard() {
+            const currentTime = Date.now();
+            const timeElapsed = currentTime - lastMainCardTime;
+            if (specialReady && timeElapsed <= SPECIAL_CARD_TIMEOUT) {
+                const newSpecialCard = new Card(player.x + player.width - 10, player.y + player.height / 2 - 22, DARK_GOLD_COLOR, true);
+                cards.push(newSpecialCard);
+                showWowMessage = true;
+                setTimeout(() => { showWowMessage = false; }, WOW_DURATION);
+                specialReady = false; 
+                lastMainCardTime = 0;
+            } else if (specialReady) {
+                specialReady = false; 
+            }
+        }
+
+        // --- Main Game Loop ---
+        function gameLoop() {
+            frames++;
+
+            // 1. Update Player/World
+            player.dx = 0;
+            if (keys['ArrowLeft']) player.dx = -PLAYER_SPEED;
+            if (keys['ArrowRight']) player.dx = PLAYER_SPEED;
+            player.update();
+            ground.update(player.dx);
+            
+            // 2. Update and Spawn Enemies/Cards
+            cards = cards.filter(card => card.active);
+            cards.forEach(card => card.update());
+
+            enemies = enemies.filter(enemy => enemy.active);
+            enemies.forEach(enemy => enemy.update(player.dx));
+
+            if (frames % MOSQUITO_SPAWN_RATE === 0) {
+                enemies.push(new Mosquito());
+            }
+
+            // 3. Collision Detection (Card vs. Mosquito)
+            cards.forEach(card => {
+                enemies.forEach(enemy => {
+                    if (enemy.active && card.active && checkCollision(card, {
+                        x: enemy.x, y: enemy.y, width: enemy.size, height: enemy.size
+                    })) {
+                        enemy.active = false; 
+                        card.active = false;  
+                        score += 10;          
+                    }
+                });
+            });
+
+            // 4. Draw
+            ctx.clearRect(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT);
+            ground.draw();
+            player.draw();
+            cards.forEach(card => card.draw());
+            enemies.forEach(enemy => enemy.draw()); 
+            
+            // 5. Draw Status & Indicator
+            ctx.fillStyle = '#333'; 
+            ctx.font = '20px Arial';
+            ctx.fillText(`Score: ${score}`, 10, 30);
+            ctx.fillText(`Jumps Left: ${MAX_JUMP_COUNT - player.currentJumpCount}`, 10, 105); // Display Jumps Left
+            
+            if (specialReady) {
+                const timeRemaining = Math.max(0, SPECIAL_CARD_TIMEOUT - (Date.now() - lastMainCardTime));
+                const secondsRemaining = (timeRemaining / 1000).toFixed(1);
+                
+                ctx.fillStyle = DARK_GOLD_COLOR;
+                ctx.font = '30px Arial';
+                ctx.fillText(`SPECIAL READY! (T) - ${secondsRemaining}s`, CANVAS_WIDTH / 2 - 200, 30);
+                
+                if (timeRemaining === 0) { specialReady = false; }
+            }
+            
+            // 6. Draw WOW Message
+            if (showWowMessage) {
+                ctx.fillStyle = 'white'; ctx.strokeStyle = DARK_GOLD_COLOR; ctx.lineWidth = 5;
+                ctx.font = 'bold 80px Impact';
+                const text = "W O W!";
+                const textWidth = ctx.measureText(text).width;
+                const textX = CANVAS_WIDTH / 2 - textWidth / 2;
+                const textY = CANVAS_HEIGHT / 2 + 30; 
+                ctx.strokeText(text, textX, textY); ctx.fillText(text, textX, textY);
+            }
+            
+            requestAnimationFrame(gameLoop);
+        }
+
+        // --- Event Listeners ---
+        document.addEventListener('keydown', (event) => {
+            if (event.code === 'ArrowLeft' || event.code === 'ArrowRight') { keys[event.code] = true; }
+            // Only call player.jump() on spacebar press
+            if (event.code === 'Space') { player.jump(); event.preventDefault(); } 
+            if (event.code === 'KeyF') { throwCard(); event.preventDefault(); }
+            if (event.code === 'KeyT') { throwSpecialCard(); event.preventDefault(); }
+        });
+
+        document.addEventListener('keyup', (event) => {
+            if (event.code === 'ArrowLeft' || event.code === 'ArrowRight') { keys[event.code] = false; }
+        });
+
+        // --- Start the game ---
+        if (musketeerImage.complete && musketeerImage.naturalWidth !== 0) {
+             imageLoaded = true;
+             gameLoop();
+        }
+    </script>
+</body>
+</html>
